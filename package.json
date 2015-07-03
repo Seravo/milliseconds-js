@@ -1,0 +1,29 @@
+{
+  "name": "milliseconds.js",
+  "version": "0.0.1",
+  "description": "A command line tool for reading data from nginx access logs",
+  "main": "milliseconds.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Seravo/milliseconds-js.git"
+  },
+  "keywords": [
+    "milliseconds",
+    "nginx",
+    "access",
+    "logs",
+    "log"
+  ],
+  "author": "Antti Kuosmanen",
+  "license": "GPLv2",
+  "bugs": {
+    "url": "https://github.com/Seravo/milliseconds-js/issues"
+  },
+  "homepage": "https://github.com/Seravo/milliseconds-js",
+  "dependencies": {
+    "commander": "^2.8.1"
+  }
+}
