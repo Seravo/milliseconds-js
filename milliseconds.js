@@ -43,7 +43,7 @@ moment.locale('fi');
 var start = moment().startOf('month');
 if(commander.start) {
   // override via option
-  start = moment(commander.start, 'L');
+  start = moment(commander.start);
 }
 
 // default end time is now
