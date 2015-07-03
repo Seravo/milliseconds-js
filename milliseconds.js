@@ -35,6 +35,27 @@ if(commander.args.length === 0) {
   process.exit();
 }
 
+// default locale
+moment.locale('fi');
+
+// default start time is start of month
+start = moment().startOf('month');
+if(commander.start) {
+  // override via option
+  start = moment(commander.start, 'L');
+}
+
+// default end time is now
+end = moment();
+if(commander.end) {
+  // override via option
+  end = moment(commander.end, 'L');
+}
+
+// DEBUG
+console.log('Start: ' + start.format());
+console.log('End: ' + end.format());
+
 // Nginx log format
 // TODO: create a parameter to bypass the default value to allow for any log format
 var nginxparser = new NginxParser(
@@ -49,8 +70,9 @@ var nginxparser = new NginxParser(
 // DEBUG
 //console.log(nginxparser);
 
-var total = 0; // number of lines processed
-var openfiles = [];
+var total = 0; // total number of lines processed
+var openfiles = []; // storage for asynchronous file opens
+
 
 _.each(commander.args, function(filename) { 
   // loop through all the files passed to this script
@@ -58,7 +80,7 @@ _.each(commander.args, function(filename) {
   // mark file as open
 
   if( filename.match(/\.gz/g) ) {
-    console.log('gzip compressed data: ' + filename);
+    //console.log('gzip compressed data: ' + filename);
 
     // uncompress to a tempfile for processing
     var tempfile = '/tmp/' + path.basename(filename) + '.uncompressed.tmp';
@@ -81,7 +103,6 @@ _.each(commander.args, function(filename) {
     parseLog(filename);
   }
 
-
 });
 
 function parseLog(logfile) {
@@ -92,15 +113,18 @@ function parseLog(logfile) {
   nginxparser.read(
     logfile, 
     function (row) {
-      // read all the rows from current file
-      ++rows;
-      ++total;
 
-      //var timestamp = moment(row['time_local'], 'DD/MMM/YYYY:HH').format('X');
-      //console.log(timestamp);
+      moment.locale('en'); // nginx writes month strings in english time format
+      var timestamp = moment(row['time_local'], 'DD/MMM/YYYY:HH:mm:ss ZZ');
+      if( timestamp.isBetween(start, end) ) {
+        // read all the rows from current file
+        ++rows;
+        ++total;
 
-      // DEBUG
-      lastRow = row;
+        // DEBUG
+        lastRow = row;
+      }
+
     },
     function (err) {
       // done processing
