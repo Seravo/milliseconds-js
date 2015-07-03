@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+'use strict';
 
 /**
  * Milliseconds.js - https://github.com/Seravo/milliseconds-js
@@ -39,14 +40,14 @@ if(commander.args.length === 0) {
 moment.locale('fi');
 
 // default start time is start of month
-start = moment().startOf('month');
+var start = moment().startOf('month');
 if(commander.start) {
   // override via option
   start = moment(commander.start, 'L');
 }
 
 // default end time is now
-end = moment();
+var end = moment();
 if(commander.end) {
   // override via option
   end = moment(commander.end, 'L');
@@ -70,14 +71,13 @@ var nginxparser = new NginxParser(
 // DEBUG
 //console.log(nginxparser);
 
-var total = 0; // total number of lines processed
 var openfiles = []; // storage for asynchronous file opens
 
 
+/**
+ * Loop through all the files passed to this script
+ */
 _.each(commander.args, function(filename) { 
-  // loop through all the files passed to this script
-
-  // mark file as open
 
   if( filename.match(/\.gz/g) ) {
     //console.log('gzip compressed data: ' + filename);
@@ -90,6 +90,7 @@ _.each(commander.args, function(filename) {
     
     var writetemp = fileinstream.pipe(gunzip).pipe(fileoutstream);
 
+    // mark file as open
     openfiles.push(tempfile);
     writetemp.on('finish', function() {
       // parse the tempfile
@@ -105,6 +106,17 @@ _.each(commander.args, function(filename) {
 
 });
 
+/**
+ * Global storage arrays for parsed data
+ */
+var r_total = [];
+var r_static = [];
+var r_cached = [];
+var r_internal = [];
+
+/**
+ * Parse the log files
+ */
 function parseLog(logfile) {
 
   var rows = 0;
@@ -117,10 +129,19 @@ function parseLog(logfile) {
       moment.locale('en'); // nginx writes month strings in english time format
       var timestamp = moment(row['time_local'], 'DD/MMM/YYYY:HH:mm:ss ZZ');
       if( timestamp.isBetween(start, end) ) {
-        // read all the rows from current file
-        ++rows;
-        ++total;
 
+        // read all the rows from current file
+        r_total.push(row.request_time * 1000);
+
+        // cached responses are marked HIT
+        if (row.upstream_cache_status === 'HIT')
+          r_cached.push(row.request_time * 1000);
+
+        // static resources have no cache status
+        if (row.upstream_cache_status === null)
+          r_static.push(row.request_time * 1000);
+
+        ++rows; // just for local accounting
         // DEBUG
         lastRow = row;
       }
@@ -150,7 +171,31 @@ function parseLog(logfile) {
  * The final output to be shown after files have been processed by the parser
  */
 function finalOutput(format) {
-  console.log("Total rows parsed: " + total);
+  var output = {
+    'total': {
+      'num_requests': r_total.length,
+      'min': Math.min.apply(Math, r_total),
+      'max': Math.max.apply(Math, r_total),
+      'avg': stats.mean(r_total),
+      '90th_percentile': stats.percentile(r_total, .9)
+    },
+    'cached': {
+      'num_requests': r_cached.length,
+      'min': Math.min.apply(Math, r_cached),
+      'max': Math.max.apply(Math, r_cached),
+      'avg': stats.mean(r_cached),
+      '90th_percentile': stats.percentile(r_cached, .9)
+    },
+    'static': {
+      'num_requests': r_static.length,
+      'min': Math.min.apply(Math, r_static),
+      'max': Math.max.apply(Math, r_static),
+      'avg': stats.mean(r_static),
+      '90th_percentile': stats.percentile(r_static, .9)
+    }
+  }
+
+  console.log(JSON.stringify(output, null, '  '));
 }
 
 
