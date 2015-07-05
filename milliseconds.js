@@ -107,12 +107,25 @@ _.each(commander.args, function(filename) {
 });
 
 /**
- * Global storage arrays for parsed data
+ * Global storage for parsed data groups
  */
-var r_total = [];
-var r_static = [];
-var r_cached = [];
-var r_internal = [];
+var r = {};
+r.total = [];
+r.hit = [];
+r.miss = [];
+r.expired = [];
+r.bypass = [];
+r.php = {};
+r.php.total = [];
+r.php.hit = [];
+r.php.miss = [];
+r.php.expired = [];
+r.php.bypass = [];
+r.static = [];
+r.internal = [];
+
+// DEBUG
+var lastRow;
 
 /**
  * Parse the log files
@@ -120,7 +133,6 @@ var r_internal = [];
 function parseLog(logfile) {
 
   var rows = 0;
-  var lastRow;
 
   nginxparser.read(
     logfile, 
@@ -128,18 +140,42 @@ function parseLog(logfile) {
 
       moment.locale('en'); // nginx writes month strings in english time format
       var timestamp = moment(row['time_local'], 'DD/MMM/YYYY:HH:mm:ss ZZ');
+
+      // is it within time range?
       if( timestamp.isBetween(start, end) ) {
 
+        var milliseconds = Math.round(row.request_time * 1000);
+
         // read all the rows from current file
-        r_total.push(row.request_time * 1000);
+        r.total.push(milliseconds);
 
-        // cached responses are marked HIT
-        if (row.upstream_cache_status === 'HIT')
-          r_cached.push(row.request_time * 1000);
+        // cache statuses
+        if(row.upstream_cache_status) {
+          if(Object.prototype.toString.call( r[row.upstream_cache_status.toLowerCase()] ) != '[object Array]') {
+            r[row.upstream_cache_status.toLowerCase()] = [];
+          }
+          r[row.upstream_cache_status.toLowerCase()].push(milliseconds);
+        }
+        else {
+          r.static.push(milliseconds);
+        }
 
-        // static resources have no cache status
-        if (row.upstream_cache_status === null)
-          r_static.push(row.request_time * 1000);
+        // PHP / HHVM
+        if (row.sent_http_x_powered_by && row.sent_http_x_powered_by.match(/php|hhvm/i)) {
+
+          // php total
+          r.php.total.push(milliseconds); 
+
+          // cache statuses
+          if(row.upstream_cache_status) {
+            if(Object.prototype.toString.call( r.php[row.upstream_cache_status.toLowerCase()] ) != '[object Array]') {
+              r.php[row.upstream_cache_status.toLowerCase()] = [];
+            }
+            r.php[row.upstream_cache_status.toLowerCase()].push(milliseconds);
+          }
+
+
+        }
 
         ++rows; // just for local accounting
         // DEBUG
@@ -153,6 +189,8 @@ function parseLog(logfile) {
 
       // this file is no longer open, remove from array
       _.pull(openfiles, logfile);
+
+      // DEBUG
       console.log("Completed processing " + rows + " rows from " + logfile);
 
       // if this was an uncompressed tempfile, delete it
@@ -171,33 +209,41 @@ function parseLog(logfile) {
  * The final output to be shown after files have been processed by the parser
  */
 function finalOutput(format) {
+
+  // DEBUG
+  //console.log(lastRow);
+
   var output = {
-    'total': {
-      'num_requests': r_total.length,
-      'min': Math.min.apply(Math, r_total),
-      'max': Math.max.apply(Math, r_total),
-      'avg': stats.mean(r_total),
-      '90th_percentile': stats.percentile(r_total, .9)
-    },
-    'cached': {
-      'num_requests': r_cached.length,
-      'min': Math.min.apply(Math, r_cached),
-      'max': Math.max.apply(Math, r_cached),
-      'avg': stats.mean(r_cached),
-      '90th_percentile': stats.percentile(r_cached, .9)
-    },
-    'static': {
-      'num_requests': r_static.length,
-      'min': Math.min.apply(Math, r_static),
-      'max': Math.max.apply(Math, r_static),
-      'avg': stats.mean(r_static),
-      '90th_percentile': stats.percentile(r_static, .9)
-    }
+    'total': calcStatsForGroup(r.total),
+    'cached': calcStatsForGroup(r.hit),
+    'uncached': calcStatsForGroup(r.miss.concat(r.expired, r.bypass, r.updating)),
+    //'cache_hit': calcStatsForGroup(r.hit),
+    //'cache_miss': calcStatsForGroup(r.miss),
+    //'cache_expired': calcStatsForGroup(r.expired),
+    //'cache_bypass': calcStatsForGroup(r.bypass),
+    'php_total': calcStatsForGroup(r.php.total),
+    'php_cached': calcStatsForGroup(r.php.hit),
+    'php_uncached': calcStatsForGroup(r.php.miss.concat(r.php.expired, r.php.bypass, r.php.updating)),
+    //'php_hit': calcStatsForGroup(r.php.hit),
+    //'php_miss': calcStatsForGroup(r.php.miss),
+    //'php_expired': calcStatsForGroup(r.php.expired),
+    //'php_bypass': calcStatsForGroup(r.php.bypass),
+    'static': calcStatsForGroup(r.static),
+    'internal': calcStatsForGroup(r.internal)
   }
 
   console.log(JSON.stringify(output, null, '  '));
 }
 
+function calcStatsForGroup(group) {
+  return !_.isEmpty(group) ? {
+    'num_requests': group.length,
+    'min': Math.min.apply(Math, group),
+    'max': Math.max.apply(Math, group),
+    'avg': stats.mean(group),
+    '90th_percentile': stats.percentile(group, .9)
+  } : {};
+}
 
 // DEBUG
 //console.log(commander);
