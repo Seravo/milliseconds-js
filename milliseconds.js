@@ -26,7 +26,7 @@ commander
   .version('1.0.0')
   .option('-s, --start <startTime>', 'Start time [start of the month]')
   .option('-e, --end <endTime>', 'End time [now]')
-  .option('--format <outputFormat>', 'Output format [list]', /^(list|csv)$/i, 'list')
+  .option('--format <outputFormat>', 'Output format [list]', /^(csv|json)$/i, 'csv')
   .arguments('<logFiles...>')
   .parse(process.argv);
 
@@ -115,14 +115,15 @@ r.hit = [];
 r.miss = [];
 r.expired = [];
 r.bypass = [];
+r.static = [];
+r.internal = [];
 r.php = {};
 r.php.total = [];
 r.php.hit = [];
 r.php.miss = [];
 r.php.expired = [];
 r.php.bypass = [];
-r.static = [];
-r.internal = [];
+r.php.static = [];
 
 // DEBUG
 var lastRow;
@@ -157,6 +158,7 @@ function parseLog(logfile) {
           r[row.upstream_cache_status.toLowerCase()].push(milliseconds);
         }
         else {
+          // static responses have no cache status
           r.static.push(milliseconds);
         }
 
@@ -173,8 +175,20 @@ function parseLog(logfile) {
             }
             r.php[row.upstream_cache_status.toLowerCase()].push(milliseconds);
           }
+          else {
+            // WTF? PHP shouldn't have static responses
+            r.php.static.push(milliseconds);
+          }
 
+        }
 
+        // internal request ?
+        if (row.http_user_agent == 'Zabbix' ||
+         row.http_user_agent == 'SWD' ||
+         row.status == '408' ||
+         row.status == '400' ||
+         row.request.substr(0, 31)  == 'POST /wp-cron.php?doing_wp_cron') {
+          r.internal.push(milliseconds);
         }
 
         ++rows; // just for local accounting
@@ -199,7 +213,7 @@ function parseLog(logfile) {
       
       // check to see if all files have been parsed
       if(_.isEmpty(openfiles)) 
-        finalOutput(); // no files left to parse, display final output
+        finalOutput(commander.format); // no files left to parse, display final output
       
     }
   );
@@ -213,26 +227,50 @@ function finalOutput(format) {
   // DEBUG
   //console.log(lastRow);
 
-  var output = {
-    'total': calcStatsForGroup(r.total),
-    'cached': calcStatsForGroup(r.hit),
-    'uncached': calcStatsForGroup(r.miss.concat(r.expired, r.bypass, r.updating)),
-    //'cache_hit': calcStatsForGroup(r.hit),
-    //'cache_miss': calcStatsForGroup(r.miss),
-    //'cache_expired': calcStatsForGroup(r.expired),
-    //'cache_bypass': calcStatsForGroup(r.bypass),
-    'php_total': calcStatsForGroup(r.php.total),
-    'php_cached': calcStatsForGroup(r.php.hit),
-    'php_uncached': calcStatsForGroup(r.php.miss.concat(r.php.expired, r.php.bypass, r.php.updating)),
-    //'php_hit': calcStatsForGroup(r.php.hit),
-    //'php_miss': calcStatsForGroup(r.php.miss),
-    //'php_expired': calcStatsForGroup(r.php.expired),
-    //'php_bypass': calcStatsForGroup(r.php.bypass),
-    'static': calcStatsForGroup(r.static),
-    'internal': calcStatsForGroup(r.internal)
+  if(commander.format.toLowerCase() === 'json') {
+    var output = {
+      'total': calcStatsForGroup(r.total),
+      'cached': calcStatsForGroup(r.hit),
+      'uncached': calcStatsForGroup(r.miss.concat(r.expired, r.bypass, r.updating, r.static)),
+      //'cache_hit': calcStatsForGroup(r.hit),
+      //'cache_miss': calcStatsForGroup(r.miss),
+      //'cache_expired': calcStatsForGroup(r.expired),
+      //'cache_bypass': calcStatsForGroup(r.bypass),
+      'php_total': calcStatsForGroup(r.php.total),
+      'php_cached': calcStatsForGroup(r.php.hit),
+      'php_uncached': calcStatsForGroup(r.php.miss.concat(r.php.expired, r.php.bypass, r.php.updating, r.php.static)),
+      //'php_hit': calcStatsForGroup(r.php.hit),
+      //'php_miss': calcStatsForGroup(r.php.miss),
+      //'php_expired': calcStatsForGroup(r.php.expired),
+      //'php_bypass': calcStatsForGroup(r.php.bypass),
+      'static': calcStatsForGroup(r.static),
+      'internal': calcStatsForGroup(r.internal)
+    }
+    console.log(JSON.stringify(output, null, '  '));
   }
+  else if(format === 'csv') {
+    // CSV
+    // This output is from the old milliseconds script by @ottok
 
-  console.log(JSON.stringify(output, null, '  '));
+    // Header line
+    console.log('total_ms,total_ms_90,system,static,php_cached,php_real,php_real_ms,php_real_ms_90'); 
+    
+    var rarr = [
+      Math.round(stats.mean(r.total)), // total_ms
+      Math.round(stats.percentile(r.total, .9)), // total_ms_90
+      r.internal.length, // system
+      Math.round(stats.mean(r.static)), // static
+      r.php.hit.length, // php_cached
+      r.php.miss.concat(r.php.expired, r.php.bypass, r.php.updating, r.php.static).length, // php_real_ms
+      Math.round(stats.mean(r.php.miss.concat(r.php.expired, r.php.bypass, r.php.updating, r.php.static))), // php_real_ms
+      Math.round(stats.percentile(r.php.miss.concat(r.php.expired, r.php.bypass, r.php.updating, r.php.static), .9)) //php_real_ms_90
+    ];
+    console.log(rarr.join(','));
+
+  }
+  else {
+    // unknown format
+  }
 }
 
 function calcStatsForGroup(group) {
