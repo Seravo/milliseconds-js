@@ -50,7 +50,7 @@ if(commander.start) {
 var end = moment();
 if(commander.end) {
   // override via option
-  end = moment(commander.end, 'L');
+  end = moment(commander.end);
 }
 
 // DEBUG
