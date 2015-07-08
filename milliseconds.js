@@ -12,6 +12,7 @@ var _ = require('lodash'); // lodash, obviously !
 var commander = require('commander'); // cli interface
 
 var fs = require('fs'); // filesystem access
+var Finder = require('fs-finder'); // globbing for fs
 var path = require('path'); // filenames
 var zlib = require('zlib'); // zlib
 
@@ -26,7 +27,9 @@ commander
   .version('1.0.0')
   .option('-s, --start <startTime>', 'Start time [start of the month]')
   .option('-e, --end <endTime>', 'End time [now]')
-  .option('--format <outputFormat>', 'Output format [list]', /^(csv|json)$/i, 'csv')
+  .option('--logformat <logFormat>', 'Log format [extended]')
+  .option('--format <outputFormat>', 'Output format [json]', /^(csv|json)$/i, 'json')
+  .option('--nocache', "Don't use cached logfiles")
   .arguments('<logFiles...>')
   .parse(process.argv);
 
@@ -54,25 +57,50 @@ if(commander.end) {
 }
 
 // DEBUG
-console.log('Start: ' + start.format());
-console.log('End: ' + end.format());
+console.log('-----> Start: ' + start.format());
+console.log('-----> End: ' + end.format());
 
-// Nginx log format
-// TODO: create a parameter to bypass the default value to allow for any log format
-var nginxparser = new NginxParser(
-  '$host ' +
-  '$remote_addr - $remote_user [$time_local] ' +
-  '"$request" $status $body_bytes_sent ' +
-  '"$http_referer" "$http_user_agent" ' +
-  '$upstream_cache_status "$sent_http_x_powered_by" ' +
-  '$request_time'
-);
+// Nginx log format default: combined
+//var logformat = '$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent"';
+
+// Seravo custom log format: extended
+var logformat = '$host $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" $upstream_cache_status "$sent_http_x_powered_by" $request_time';
+
+// override log format
+if(commander.logformat && commander.logformat != 'extended') {
+  logformat = commander.logformat;
+}
+
+var nginxparser = new NginxParser(logformat);
 
 // DEBUG
 //console.log(nginxparser);
 
 var openfiles = []; // storage for asynchronous file opens
 
+/**
+ * Global storage model for parsed data groups
+ */
+var rskel = {};
+rskel.total = [];
+rskel.hit = [];
+rskel.miss = [];
+rskel.expired = [];
+rskel.bypass = [];
+rskel.static = [];
+rskel.internal = [];
+
+// Seravo specific need
+rskel.php = {};
+rskel.php.total = [];
+rskel.php.hit = [];
+rskel.php.miss = [];
+rskel.php.expired = [];
+rskel.php.bypass = [];
+rskel.php.static = [];
+
+// actual global object
+var r = _.cloneDeep(rskel);
 
 /**
  * Loop through all the files passed to this script
@@ -93,6 +121,9 @@ _.each(commander.args, function(filename) {
     // mark file as open
     openfiles.push(tempfile);
     writetemp.on('finish', function() {
+      // DEBUG
+      console.log('-----> Uncompressed ' + filename + ' to ' + tempfile);
+
       // parse the tempfile
       parseLog(tempfile, filename); 
     });
@@ -106,24 +137,6 @@ _.each(commander.args, function(filename) {
 
 });
 
-/**
- * Global storage for parsed data groups
- */
-var r = {};
-r.total = [];
-r.hit = [];
-r.miss = [];
-r.expired = [];
-r.bypass = [];
-r.static = [];
-r.internal = [];
-r.php = {};
-r.php.total = [];
-r.php.hit = [];
-r.php.miss = [];
-r.php.expired = [];
-r.php.bypass = [];
-r.php.static = [];
 
 // DEBUG
 var lastRow;
@@ -133,14 +146,67 @@ var lastRow;
  */
 function parseLog(logfile) {
 
-  var rows = 0;
+  // try cache
+  var cacheFile = '/tmp/milliseconds.cache.' + path.basename(logfile);
+  var files = Finder.from('/tmp').findFiles(path.basename(cacheFile) + '.<[0-9]+>.<[0-9]+>'); 
 
+  if (files.length > 0 && !commander.nocache) {
+
+    var timestampsregex = /\.([0-9]+)\.([0-9]+)/;
+    var timestamps = timestampsregex.exec(files[0]);
+
+    var cacheStart = moment(timestamps[1], 'X');
+    var cacheEnd = moment(timestamps[2], 'X');
+
+    // check that the cached file fits between our timestamps
+    if( cacheStart.isBetween(start, end) && cacheEnd.isBetween(start, end) ) {
+
+      // use the cached file
+      fs.readFile(files[0], 'utf8', function (err, data) {
+        if (err) return console.log(err);
+
+        // DEBUG
+        console.log('-----> Using cache: ' + files[0]);
+
+        // append cached data to r
+        var lr = JSON.parse(data);
+        _.extend(r, lr);
+
+        // this file is no longer open, remove from array
+        _.pull(openfiles, logfile);
+
+        // check to see if all files have been parsed
+        if(_.isEmpty(openfiles)) 
+          finalOutput(commander.format); // no files left to parse, display final output
+
+      });
+
+      return true; // no need to parse the file since we used cached data
+
+    }
+
+  }
+
+  // if we reach here, we need to parse the file
+  var rows = 0;
+  var inRange = 0;
+
+  var timestamp;
+  var firstTime; // first timestamp of this file
+  var lastTime; // last timestamp of this file
+
+  // local instance of r which we make a copy of here
+  var lr = _.cloneDeep(rskel);
   nginxparser.read(
     logfile, 
     function (row) {
 
+      ++rows;
+
       moment.locale('en'); // nginx writes month strings in english time format
-      var timestamp = moment(row['time_local'], 'DD/MMM/YYYY:HH:mm:ss ZZ');
+      timestamp = moment(row['time_local'], 'DD/MMM/YYYY:HH:mm:ss ZZ');
+
+      if(!firstTime) firstTime = moment(row['time_local'], 'DD/MMM/YYYY:HH:mm:ss ZZ'); // save first timestamp
 
       // is it within time range?
       if( timestamp.isBetween(start, end) ) {
@@ -148,36 +214,36 @@ function parseLog(logfile) {
         var milliseconds = Math.round(row.request_time * 1000);
 
         // read all the rows from current file
-        r.total.push(milliseconds);
+        lr.total.push(milliseconds);
 
         // cache statuses
         if(row.upstream_cache_status) {
-          if(Object.prototype.toString.call( r[row.upstream_cache_status.toLowerCase()] ) != '[object Array]') {
-            r[row.upstream_cache_status.toLowerCase()] = [];
+          if(Object.prototype.toString.call( lr[row.upstream_cache_status.toLowerCase()] ) != '[object Array]') {
+            lr[row.upstream_cache_status.toLowerCase()] = [];
           }
-          r[row.upstream_cache_status.toLowerCase()].push(milliseconds);
+          lr[row.upstream_cache_status.toLowerCase()].push(milliseconds);
         }
         else {
           // static responses have no cache status
-          r.static.push(milliseconds);
+          lr.static.push(milliseconds);
         }
 
         // PHP / HHVM
         if (row.sent_http_x_powered_by && row.sent_http_x_powered_by.match(/php|hhvm/i)) {
 
           // php total
-          r.php.total.push(milliseconds); 
+          lr.php.total.push(milliseconds); 
 
           // cache statuses
           if(row.upstream_cache_status) {
-            if(Object.prototype.toString.call( r.php[row.upstream_cache_status.toLowerCase()] ) != '[object Array]') {
-              r.php[row.upstream_cache_status.toLowerCase()] = [];
+            if(Object.prototype.toString.call( lr.php[row.upstream_cache_status.toLowerCase()] ) != '[object Array]') {
+              lr.php[row.upstream_cache_status.toLowerCase()] = [];
             }
-            r.php[row.upstream_cache_status.toLowerCase()].push(milliseconds);
+            lr.php[row.upstream_cache_status.toLowerCase()].push(milliseconds);
           }
           else {
             // WTF? PHP shouldn't have static responses
-            r.php.static.push(milliseconds);
+            lr.php.static.push(milliseconds);
           }
 
         }
@@ -188,24 +254,47 @@ function parseLog(logfile) {
          row.status == '408' ||
          row.status == '400' ||
          row.request.substr(0, 31)  == 'POST /wp-cron.php?doing_wp_cron') {
-          r.internal.push(milliseconds);
+          lr.internal.push(milliseconds);
         }
 
-        ++rows; // just for local accounting
+        // save to temporary chunkfile 
+
+        ++inRange; // just for local accounting
         // DEBUG
         lastRow = row;
       }
 
     },
-    function (err) {
-      // done processing
+    function (err) { // finish processing
+
       if(err) throw err; 
 
       // this file is no longer open, remove from array
       _.pull(openfiles, logfile);
 
       // DEBUG
-      console.log("Completed processing " + rows + " rows from " + logfile);
+      console.log("-----> Completed processing " + rows + " rows from " + logfile + " " + inRange + " within time range");
+
+      if(!_.isEmpty(lr)) {
+
+        lastTime = timestamp; // last timestamp of file
+
+        // DEBUG
+        console.log("-----> First timestamp: " + firstTime.format()); 
+        console.log("-----> Last timestamp: " + lastTime.format()); 
+        
+        // cache the local instance of r to a tempfile if all rows were used
+        if(rows === inRange) {
+          cacheFile = cacheFile + '.' + firstTime.format('X') + '.' + lastTime.format('X'); // append timestamps to cachefile name
+          fs.writeFile(cacheFile, JSON.stringify(lr), function(err) {
+            if(err) return console.log(err);
+            console.log('-----> Saved processed ' + logfile + ' to cache ' + cacheFile);
+          }); 
+        }
+
+        // append lr to global r
+        _.extend(r, lr);
+      }
 
       // if this was an uncompressed tempfile, delete it
       if(logfile.match(/\.uncompressed\.tmp^/g)) 
@@ -217,6 +306,9 @@ function parseLog(logfile) {
       
     }
   );
+
+  return true;
+
 }
 
 /**
@@ -276,14 +368,10 @@ function finalOutput(format) {
 function calcStatsForGroup(group) {
   return !_.isEmpty(group) ? {
     'num_requests': group.length,
-    'min': Math.min.apply(Math, group),
-    'max': Math.max.apply(Math, group),
+    'min': _.min(group),
+    'max': _.max(group),
     'avg': stats.mean(group),
     '90th_percentile': stats.percentile(group, .9)
   } : {};
 }
-
-// DEBUG
-//console.log(commander);
-
 

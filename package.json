@@ -25,6 +25,7 @@
   "homepage": "https://github.com/Seravo/milliseconds-js",
   "dependencies": {
     "commander": "^2.8.1",
+    "fs-finder": "^1.8.0",
     "lodash": "^3.10.0",
     "moment": "^2.10.3",
     "nginxparser": "^1.2.0",
