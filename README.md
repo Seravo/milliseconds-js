@@ -7,7 +7,7 @@ A Node.js command line tool for reading data from nginx access logs
 ```
 ./milliseconds.js 
 
-  Usage: milliseconds [options] <logFiles...>
+Usage: milliseconds [options] <logFiles...>
 
   Options:
 
@@ -15,6 +15,15 @@ A Node.js command line tool for reading data from nginx access logs
     -V, --version            output the version number
     -s, --start <startTime>  Start time [start of the month]
     -e, --end <endTime>      End time [now]
-    --format <outputFormat>  Output format [list]
+    --logformat <logFormat>  Log format [extended]
+    --format <outputFormat>  Output format [json]
+    --nocache                Don't use cached logfiles
 
+```
+
+## Examples
+
+Coming soon...
+
+```
 ```
