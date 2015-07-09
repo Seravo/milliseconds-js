@@ -107,47 +107,11 @@ var r = _.cloneDeep(rskel);
  */
 _.each(commander.args, function(filename) { 
 
-  if( filename.match(/\.gz/g) ) {
-    //console.log('gzip compressed data: ' + filename);
-
-    // uncompress to a tempfile for processing
-    var tempfile = '/tmp/' + path.basename(filename) + '.uncompressed.tmp';
-    var gunzip = zlib.createGunzip();
-    var fileinstream = fs.createReadStream(filename);
-    var fileoutstream = fs.createWriteStream(tempfile);
-    
-    var writetemp = fileinstream.pipe(gunzip).pipe(fileoutstream);
-
-    // mark file as open
-    openfiles.push(tempfile);
-    writetemp.on('finish', function() {
-      // DEBUG
-      console.log('-----> Uncompressed ' + filename + ' to ' + tempfile);
-
-      // parse the tempfile
-      parseLog(tempfile, filename); 
-    });
-
-  }
-  else {
-    // we can start parsing plaintext files right away
-    openfiles.push(filename);
-    parseLog(filename);
-  }
-
-});
-
-
-// DEBUG
-var lastRow;
-
-/**
- * Parse the log files
- */
-function parseLog(logfile) {
+  // mark file as open
+  openfiles.push(filename);
 
   // try cache
-  var cacheFile = '/tmp/milliseconds.cache.' + path.basename(logfile);
+  var cacheFile = '/tmp/milliseconds.cache.' + path.basename(filename);
   var files = Finder.from('/tmp').findFiles(path.basename(cacheFile) + '.<[0-9]+>.<[0-9]+>'); 
 
   if (files.length > 0 && !commander.nocache) {
@@ -173,7 +137,7 @@ function parseLog(logfile) {
         _.extend(r, lr);
 
         // this file is no longer open, remove from array
-        _.pull(openfiles, logfile);
+        _.pull(openfiles, filename);
 
         // check to see if all files have been parsed
         if(_.isEmpty(openfiles)) 
@@ -187,31 +151,82 @@ function parseLog(logfile) {
 
   }
 
-  // if we reach here, we need to parse the file
-  var rows = 0;
-  var inRange = 0;
+  // see if it's in gzip compressed format via logrotate
+  if( filename.match(/\.gz/g) ) {
+    //console.log('gzip compressed data: ' + filename);
 
+    // uncompress to a tempfile for processing
+    var tempfile = '/tmp/' + path.basename(filename) + '.uncompressed.tmp';
+    var gunzip = zlib.createGunzip();
+    var fileinstream = fs.createReadStream(filename);
+    var fileoutstream = fs.createWriteStream(tempfile);
+    
+    var writetemp = fileinstream.pipe(gunzip).pipe(fileoutstream);
+
+    writetemp.on('finish', function() {
+      // DEBUG
+      console.log('-----> Uncompressed ' + filename + ' to ' + tempfile);
+
+      // parse the tempfile
+      parseLog(tempfile, filename); 
+    });
+
+  }
+  else {
+    // we can start parsing plaintext files right away
+    parseLog(filename);
+  }
+
+});
+
+
+// DEBUG
+var lastRow;
+
+/**
+ * Parse the log files
+ */
+function parseLog(logfile, origFile) {
+
+  var milliseconds;
   var timestamp;
   var firstTime; // first timestamp of this file
   var lastTime; // last timestamp of this file
 
+  var rows = 0;
+  var inRange = 0;
+
   // local instance of r which we make a copy of here
   var lr = _.cloneDeep(rskel);
-  nginxparser.read(
+
+  var isPHP = /php|hhvm/i;
+
+  moment.locale('en'); // nginx writes month strings in english time format
+
+  var operation = nginxparser.read(
     logfile, 
     function (row) {
 
       ++rows;
 
-      moment.locale('en'); // nginx writes month strings in english time format
       timestamp = moment(row['time_local'], 'DD/MMM/YYYY:HH:mm:ss ZZ');
 
-      if(!firstTime) firstTime = moment(row['time_local'], 'DD/MMM/YYYY:HH:mm:ss ZZ'); // save first timestamp
+      if(!firstTime) {
+        // save the first timestamp
+        firstTime = moment(row['time_local'], 'DD/MMM/YYYY:HH:mm:ss ZZ');
+        if(firstTime.isAfter(end)){
+          // we can stop parsing the file now
+          console.log('-----> First timestamp was after the end of range, skipping file ' + logfile + '...');
+          operation.emit('end');
+          operation.close();
+        }
+      }
 
       // is it within time range?
       if( timestamp.isBetween(start, end) ) {
 
-        var milliseconds = Math.round(row.request_time * 1000);
+        // convert request time in microseconds to milliseconds
+        milliseconds = Math.round(row.request_time * 1000);
 
         // read all the rows from current file
         lr.total.push(milliseconds);
@@ -229,7 +244,7 @@ function parseLog(logfile) {
         }
 
         // PHP / HHVM
-        if (row.sent_http_x_powered_by && row.sent_http_x_powered_by.match(/php|hhvm/i)) {
+        if (row.sent_http_x_powered_by && row.sent_http_x_powered_by.match(isPHP)) {
 
           // php total
           lr.php.total.push(milliseconds); 
@@ -249,19 +264,20 @@ function parseLog(logfile) {
         }
 
         // internal request ?
-        if (row.http_user_agent == 'Zabbix' ||
-         row.http_user_agent == 'SWD' ||
-         row.status == '408' ||
-         row.status == '400' ||
-         row.request.substr(0, 31)  == 'POST /wp-cron.php?doing_wp_cron') {
+        if (row.http_user_agent === 'Zabbix' ||
+         row.http_user_agent === 'SWD' ||
+         row.status === '408' ||
+         row.status === '400' ||
+         row.request.substr(0, 31) === 'POST /wp-cron.php?doing_wp_cron') {
           lr.internal.push(milliseconds);
         }
 
         // save to temporary chunkfile 
 
         ++inRange; // just for local accounting
+
         // DEBUG
-        lastRow = row;
+        //lastRow = row;
       }
 
     },
@@ -270,18 +286,19 @@ function parseLog(logfile) {
       if(err) throw err; 
 
       // this file is no longer open, remove from array
-      _.pull(openfiles, logfile);
+      _.pull(openfiles, (origFile ? origFile : logfile));
 
       // DEBUG
       console.log("-----> Completed processing " + rows + " rows from " + logfile + " " + inRange + " within time range");
 
+      // last timestamp is the latest one processed
+      lastTime = timestamp;
+
+      // DEBUG
+      console.log("-----> First timestamp: " + firstTime.format()); 
+      console.log("-----> Last timestamp: " + lastTime.format()); 
+
       if(!_.isEmpty(lr)) {
-
-        lastTime = timestamp; // last timestamp of file
-
-        // DEBUG
-        console.log("-----> First timestamp: " + firstTime.format()); 
-        console.log("-----> Last timestamp: " + lastTime.format()); 
         
         // cache the local instance of r to a tempfile if all rows were used
         if(rows === inRange) {
@@ -371,7 +388,7 @@ function calcStatsForGroup(group) {
     'min': _.min(group),
     'max': _.max(group),
     'avg': stats.mean(group),
-    '90th_percentile': stats.percentile(group, .9)
+    '80th_percentile': stats.percentile(group, .8) // this doesn't seem to work properly, need to test it
   } : {};
 }
 
