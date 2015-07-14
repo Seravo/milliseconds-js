@@ -2,6 +2,21 @@
 
 A Node.js command line tool for reading data from nginx access logs
 
+## Installation
+
+Requires node-js and npm
+
+Clone and install the script
+```
+git clone https://github.com/Seravo/milliseconds-js.git 
+cd milliseconds-js && npm install
+```
+
+Add script to your path (optional):
+```
+ln -s $PWD/milliseconds.js /usr/local/bin/milliseconds
+```
+
 ## Usage
 
 ```

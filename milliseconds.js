@@ -203,6 +203,8 @@ function parseLog(logfile, origFile) {
 
   moment.locale('en'); // nginx writes month strings in english time format
 
+  var cacheFile = '/tmp/milliseconds.cache.' + path.basename(origFile);
+
   var operation = nginxparser.read(
     logfile, 
     function (row) {
