@@ -20,7 +20,7 @@ var NginxParser = require('nginxparser'); // Nginx log parser
 var moment = require('moment'); // time-related functions
 var stats = require('stats-lite'); // general statistical functions
 
- 
+
 // Node commander docs can be found here:
 // https://www.npmjs.com/package/commander
 commander
@@ -105,14 +105,14 @@ var r = _.cloneDeep(rskel);
 /**
  * Loop through all the files passed to this script
  */
-_.each(commander.args, function(filename) { 
+_.each(commander.args, function(filename) {
 
   // mark file as open
   openfiles.push(filename);
 
   // try cache
   var cacheFile = '/tmp/milliseconds.cache.' + path.basename(filename);
-  var files = Finder.from('/tmp').findFiles(path.basename(cacheFile) + '.<[0-9]+>.<[0-9]+>'); 
+  var files = Finder.from('/tmp').findFiles(path.basename(cacheFile) + '.<[0-9]+>.<[0-9]+>');
 
   if (files.length > 0 && !commander.nocache) {
 
@@ -140,7 +140,7 @@ _.each(commander.args, function(filename) {
         _.pull(openfiles, filename);
 
         // check to see if all files have been parsed
-        if(_.isEmpty(openfiles)) 
+        if(_.isEmpty(openfiles))
           finalOutput(commander.format); // no files left to parse, display final output
 
       });
@@ -160,7 +160,7 @@ _.each(commander.args, function(filename) {
     var gunzip = zlib.createGunzip();
     var fileinstream = fs.createReadStream(filename);
     var fileoutstream = fs.createWriteStream(tempfile);
-    
+
     var writetemp = fileinstream.pipe(gunzip).pipe(fileoutstream);
 
     writetemp.on('finish', function() {
@@ -168,7 +168,7 @@ _.each(commander.args, function(filename) {
       console.log('-----> Uncompressed ' + filename + ' to ' + tempfile);
 
       // parse the tempfile
-      parseLog(tempfile, filename); 
+      parseLog(tempfile, filename);
     });
 
   }
@@ -206,7 +206,7 @@ function parseLog(logfile, origFile) {
   var cacheFile = '/tmp/milliseconds.cache.' + path.basename(origFile);
 
   var operation = nginxparser.read(
-    logfile, 
+    logfile,
     function (row) {
 
       ++rows;
@@ -225,7 +225,7 @@ function parseLog(logfile, origFile) {
       }
 
       // is it within time range?
-      if( timestamp.isBetween(start, end) ) {
+      if ( timestamp.isBetween(start, end) ) {
 
         // convert request time in microseconds to milliseconds
         milliseconds = Math.round(row.request_time * 1000);
@@ -249,7 +249,7 @@ function parseLog(logfile, origFile) {
         if (row.sent_http_x_powered_by && row.sent_http_x_powered_by.match(isPHP)) {
 
           // php total
-          lr.php.total.push(milliseconds); 
+          lr.php.total.push(milliseconds);
 
           // cache statuses
           if(row.upstream_cache_status) {
@@ -274,7 +274,7 @@ function parseLog(logfile, origFile) {
           lr.internal.push(milliseconds);
         }
 
-        // save to temporary chunkfile 
+        // save to temporary chunkfile
 
         ++inRange; // just for local accounting
 
@@ -285,7 +285,7 @@ function parseLog(logfile, origFile) {
     },
     function (err) { // finish processing
 
-      if(err) throw err; 
+      if(err) throw err;
 
       // this file is no longer open, remove from array
       _.pull(openfiles, (origFile ? origFile : logfile));
@@ -297,32 +297,37 @@ function parseLog(logfile, origFile) {
       lastTime = timestamp;
 
       // DEBUG
-      console.log("-----> First timestamp: " + firstTime.format()); 
-      console.log("-----> Last timestamp: " + lastTime.format()); 
+      if (firstTime && lastTime) {
+        console.log("-----> First timestamp: " + firstTime.format());
+        console.log("-----> Last timestamp: " + lastTime.format());
+      }
 
-      if(!_.isEmpty(lr)) {
-        
+      if (!_.isEmpty(lr) && lr.total.length > 0) {
+
         // cache the local instance of r to a tempfile if all rows were used
         if(rows === inRange) {
           cacheFile = cacheFile + '.' + firstTime.format('X') + '.' + lastTime.format('X'); // append timestamps to cachefile name
           fs.writeFile(cacheFile, JSON.stringify(lr), function(err) {
             if(err) return console.log(err);
             console.log('-----> Saved processed ' + logfile + ' to cache ' + cacheFile);
-          }); 
+          });
         }
 
         // append lr to global r
         _.extend(r, lr);
+      } else {
+        console.log('-----> No lines processed ' + logfile);
+        console.log('-----> Wrong log format?');
       }
 
       // if this was an uncompressed tempfile, delete it
-      if(logfile.match(/\.uncompressed\.tmp^/g)) 
+      if(logfile.match(/\.uncompressed\.tmp^/g))
         fs.unlink(logfile, function (err) { if (err) throw err } );
-      
+
       // check to see if all files have been parsed
-      if(_.isEmpty(openfiles)) 
+      if(_.isEmpty(openfiles))
         finalOutput(commander.format); // no files left to parse, display final output
-      
+
     }
   );
 
@@ -364,8 +369,8 @@ function finalOutput(format) {
     // This output is from the old milliseconds script by @ottok
 
     // Header line
-    console.log('total_ms,total_ms_90,system,static,php_cached,php_real,php_real_ms,php_real_ms_90'); 
-    
+    console.log('total_ms,total_ms_90,system,static,php_cached,php_real,php_real_ms,php_real_ms_90');
+
     var rarr = [
       Math.round(stats.mean(r.total)), // total_ms
       Math.round(stats.percentile(r.total, .9)), // total_ms_90
@@ -393,4 +398,3 @@ function calcStatsForGroup(group) {
     '80th_percentile': stats.percentile(group, .8) // this doesn't seem to work properly, need to test it
   } : {};
 }
-
