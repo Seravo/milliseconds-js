@@ -28,7 +28,7 @@
     "fs-finder": "^1.8.0",
     "lodash": "^3.10.0",
     "moment": "^2.10.3",
-    "nginxparser": "^1.2.0",
+    "nginxparser": "1.2.0",
     "stats-lite": "^1.0.3"
   }
 }
