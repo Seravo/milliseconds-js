@@ -389,12 +389,14 @@ function finalOutput(format) {
   }
 }
 
+// Remember to round/floor all values to whole integers as we don't want to
+// waste disk space on storing fractions of milliseconds
 function calcStatsForGroup(group) {
   return !_.isEmpty(group) ? {
     'num_requests': group.length,
     'min': _.min(group),
     'max': _.max(group),
-    'avg': stats.mean(group),
-    '80th_percentile': stats.percentile(group, .8) // this doesn't seem to work properly, need to test it
+    'avg': Math.floor(stats.mean(group)),
+    '80th_percentile': Math.floor(stats.percentile(group, .8)) // this doesn't seem to work properly, need to test it
   } : {};
 }
