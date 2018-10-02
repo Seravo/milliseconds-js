@@ -2,13 +2,15 @@
 
 A Node.js command line tool for reading data from nginx access logs
 
+> **DEPRECATED**: This project is no longer maintained nor even compatible with recent versions of Node.js. This project as been superseded by the new Python based [Milliseconds project](https://github.com/Seravo/milliseconds).
+
 ## Installation
 
 Requires node-js and npm
 
 Clone and install the script
 ```
-git clone https://github.com/Seravo/milliseconds-js.git 
+git clone https://github.com/Seravo/milliseconds-js.git
 cd milliseconds-js && npm install
 ```
 
@@ -20,7 +22,7 @@ ln -s $PWD/milliseconds.js /usr/local/bin/milliseconds
 ## Usage
 
 ```
-./milliseconds.js 
+./milliseconds.js
 
 Usage: milliseconds [options] <logFiles...>
 
@@ -104,11 +106,4 @@ $ milliseconds total-access.log
   }
 }
 -----> Saved processed total-access.log to cache /tmp/milliseconds.cache.undefined.1437995977.1437998236
-```
-
-## Examples
-
-Coming soon...
-
-```
 ```
